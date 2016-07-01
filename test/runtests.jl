@@ -44,10 +44,11 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
     time_b = 0.0
     iter_a = 0
     iter_b = 0
-    slowest_time = 0.0
-    slowest_col = -1
 
     function t(sense::Symbol)
+        slowest_time = 0.0
+        slowest_col = -1
+
         if sense == :minimize
             Gurobi.set_intattr!(a, "ModelSense", 1)
             Gurobi.set_intattr!(b, "ModelSense", 1)
