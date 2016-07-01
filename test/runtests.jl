@@ -72,7 +72,7 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
                 obj_a = get_objval(a)
                 obj_b = get_objval(b)
 
-                if obj_a != obj_b
+                if !isapprox(obj_a, obj_b, rtol=1e-10, atol=1e-10)
                     # TODO: use get_charattrelement.
                     vtype_a = Gurobi.get_charattrarray(a, "VType", 1, num_vars(a))[col]
                     vtype_b = Gurobi.get_charattrarray(b, "VType", 1, num_vars(b))[mapped_col]
