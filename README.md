@@ -6,6 +6,8 @@
 
 This is a MILP presolver for Gurobi.
 
+Sometimes we want to solve a batch of very similar models derived from a base model. Gurobi has to perform `Presolve` on each of them, which is rather time consuming. The idea of this package is to apply a simple `preprocess`, and then let Gurobi do the rest with or without its own `Presolve`.
+
 Note: It only works for MILP (Mixed Integer Linear Programming) without sos.
 
 ## Example
