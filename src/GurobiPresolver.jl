@@ -151,8 +151,8 @@ function domain_propagate(
 
         info(LOGGER, "Pass $pass $(pass_stats).")
     end
-    synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
-    synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
+    #synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
+    #synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
     synonym_redirection = get_synonym_redirection(synonyms, fixed, lbs, ubs)
 
     num_fixed = length(fixed)
