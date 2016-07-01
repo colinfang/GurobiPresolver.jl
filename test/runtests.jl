@@ -102,7 +102,7 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
                 set_dblattrelement!(b, "Obj", mapped_col, 0.0)
             end
         end
-        println("Slowest time is for $sense $(slowest_col) with $(slowest_time) sec.")
+        println("Slowest time for $sense is $(slowest_col) with $(slowest_time) sec.")
     end
 
     t(:minimize)
