@@ -25,7 +25,7 @@ presolved_model, variable_mapping, constraint_mapping = preprocess(original_mode
 
 - `presolved_model` is the presolved `Gurobi.Model`.
 
-- `variable_mapping` is the many to one mapping of the variables from original model to the presolved model. If an original variable is missing from the `varible_mapping`, it means it is fixed and its values are already substituted into the constraints of `presolved_model`.
+- `variable_mapping` is the many to one mapping of the variables from original model to the presolved model. If an original variable is missing from it, we can tell it is fixed and its values are already substituted into the constraints of `presolved_model`.
 
 - `essential_variables` is a set of variables that we don't want the presolver to optimize away, so that later we may add constraints or change objective coefficients w.r.t. them.
 
