@@ -121,7 +121,7 @@ function domain_propagate(
     fixed = Set{Int}()
     redundant_constraints = Set{Int}()
     synonyms = Dict{Int, Int}()
-    tighten_bounds(lbs, ubs, vtypes)
+    tighten_bounds_for_integers(lbs, ubs, vtypes)
     updated = true
     pass = 0
     while updated
@@ -170,14 +170,14 @@ end
 
 
 """
-Called by `tighten_bounds` only.
+Called by `tighten_bounds_for_integers` only.
 """
-function tighten_ub(col::Int, ubs::Vector{Float64}, vtype::Char)
+function tighten_ub_for_integer(col::Int, ubs::Vector{Float64}, vtype::Char)
     ub = ubs[col]
     if is_int(vtype)
         x = floor(ub)
         if x < ub
-            debug(LOGGER, "Variable $(col) ub: $ub -> $x")
+            debug(LOGGER, "Reduce variable $(col) ub to integer: $ub -> $x")
             ubs[col] = x
             return true
         end
@@ -186,14 +186,14 @@ function tighten_ub(col::Int, ubs::Vector{Float64}, vtype::Char)
 end
 
 """
-Called by `tighten_bounds` only.
+Called by `tighten_bounds_for_integers` only.
 """
-function tighten_lb(col::Int, lbs::Vector{Float64}, vtype::Char)
+function tighten_lb_for_integer(col::Int, lbs::Vector{Float64}, vtype::Char)
     lb = lbs[col]
     if is_int(vtype)
         x = ceil(lb)
         if x > lb
-            debug(LOGGER, "Variable $(col) lb: $lb -> $x")
+            debug(LOGGER, "Reduce Variable $(col) lb to integer: $lb -> $x")
             lbs[col] = x
             return true
         end
@@ -202,12 +202,15 @@ function tighten_lb(col::Int, lbs::Vector{Float64}, vtype::Char)
 end
 
 
-function tighten_bounds(lbs::Vector{Float64}, ubs::Vector{Float64}, vtypes::Vector{Char})
-    debug(LOGGER, "Start initial bounds reductions.")
+function tighten_bounds_for_integers(lbs::Vector{Float64}, ubs::Vector{Float64}, vtypes::Vector{Char})
+    debug(LOGGER, "Start initial bounds reductions for integers.")
     for col in eachindex(lbs)
         vtype = vtypes[col]
-        tighten_lb(col, lbs, vtype)
-        tighten_ub(col, ubs, vtype)
+        if lbs[col] > ubs[col]
+            error("Infeasible!")
+        end
+        tighten_lb_for_integer(col, lbs, vtype)
+        tighten_ub_for_integer(col, ubs, vtype)
     end
 end
 

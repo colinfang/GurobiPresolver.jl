@@ -60,7 +60,7 @@ function update_bound_greater(
 end
 
 """
-Called by `update_bound...` only.
+Called by `update_bound...` & `apply_synonym_substitution` only.
 """
 function tighten_ub(col::Int, x::Float64, ubs::Vector{Float64}, vtype::Char)
     ub = ubs[col]
@@ -80,7 +80,7 @@ function tighten_ub(col::Int, x::Float64, ubs::Vector{Float64}, vtype::Char)
 end
 
 """
-Called by `update_bound...` only.
+Called by `update_bound...` & `apply_synonym_substitution` only.
 """
 function tighten_lb(col::Int, x::Float64, lbs::Vector{Float64}, vtype::Char)
     lb = lbs[col]
