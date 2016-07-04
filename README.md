@@ -42,8 +42,9 @@ presolved_model, variable_mapping, constraint_mapping = preprocess(original_mode
 Read MPS format model from file milp1.mps
 Reading time = 0.00 seconds
 : 2076 rows, 2016 columns, 5580 nonzeros
-Slowest time for minimize is 375 with 0.03900313377380371 sec.
-Slowest time for maximize is 402 with 0.03914785385131836 sec.
-Original model (#vars=2016, #constrs=2076) takes 22.054952383041382 sec.
-Presolved model (#vars=860, #constrs=735) takes 9.916577100753784 sec with 275680 iterations.
+Slowest time for minimize is 375 with 0.040085792541503906 sec.
+Slowest time for maximize is 365 with 0.04070901870727539 sec.
+Original model (#vars=2016, #constrs=2076) takes 22.091896772384644 sec.
+Gurobi presolved model (#vars=222, #constrs=308).
+Presolved model (#vars=860, #constrs=735) takes 9.94690752029419 sec with 275680 iterations.
 ```
