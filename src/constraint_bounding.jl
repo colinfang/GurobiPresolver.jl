@@ -21,6 +21,68 @@ function get_constraint_ub(positive_indices, negative_indices, lbs, ubs, cols, c
     sum_product(positive_indices, ubs, cols, coefs) + sum_product(negative_indices, lbs, cols, coefs)
 end
 
+"""
+- Fix the variables to one of the bounds.
+- One the next pass `variable_fixing` those varibles will be detected as fixed.
+"""
+function fix_to_constraint_lb(
+        positive_indices::Vector{Int}, negative_indices::Vector{Int},
+        lbs::Vector{Float64}, ubs::Vector{Float64}, cols::Vector{Int}
+    )
+    for i in positive_indices
+        col = cols[i]
+        if lbs[col] > ubs[col]
+            error("Infeasible!")
+        elseif lbs[col] < ubs[col]
+            # Bounds are already integers if variable type is integer.
+            debug(LOGGER, "Variable $(col) is fixed to lb = $(lbs[col])")
+            ubs[col] = lbs[col]
+        end
+    end
+
+    for i in negative_indices
+        col = cols[i]
+        if lbs[col] > ubs[col]
+            error("Infeasible!")
+        elseif lbs[col] < ubs[col]
+            # Bounds are already integers if variable type is integer.
+            debug(LOGGER, "Variable $(col) is fixed to ub = $(ubs[col])")
+            lbs[col] = ubs[col]
+        end
+    end
+end
+
+"""
+- Fix the variables to one of the bounds.
+- One the next pass `variable_fixing` those varibles will be detected as fixed.
+"""
+function fix_to_constraint_ub(
+        positive_indices::Vector{Int}, negative_indices::Vector{Int},
+        lbs::Vector{Float64}, ubs::Vector{Float64}, cols::Vector{Int}
+    )
+    for i in negative_indices
+        col = cols[i]
+        if lbs[col] > ubs[col]
+            error("Infeasible!")
+        elseif lbs[col] < ubs[col]
+            # Bounds are already integers if variable type is integer.
+            debug(LOGGER, "Variable $(col) is fixed to lb = $(lbs[col])")
+            ubs[col] = lbs[col]
+        end
+    end
+
+    for i in positive_indices
+        col = cols[i]
+        if lbs[col] > ubs[col]
+            error("Infeasible!")
+        elseif lbs[col] < ubs[col]
+            # Bounds are already integers if variable type is integer.
+            debug(LOGGER, "Variable $(col) is fixed to ub = $(ubs[col])")
+            lbs[col] = ubs[col]
+        end
+    end
+end
+
 function remove_constraint(m, row::Int, rhs_s::Vector{Float64})
     m[row, :] = 0.0
     rhs_s[row] = 0.0
@@ -64,30 +126,29 @@ function apply_constraint_bounding(
         constraint_ub = get_constraint_ub(positive_indices, negative_indices, lbs, ubs, cols, coefs)
         constraint_lb = get_constraint_lb(positive_indices, negative_indices, lbs, ubs, cols, coefs)
 
-        row_exists = true
         if sense == '<'
-            if rhs >= constraint_ub && row_exists
+            if rhs >= constraint_ub
                 remove_constraint(m, row, rhs_s)
                 push!(redundant_constraints, row)
                 num_redundant_constraints += 1
-                row_exists = false
-            end
-            if rhs == constraint_lb
-                # TODO
+            elseif rhs == constraint_lb
+                fix_to_constraint_lb(positive_indices, negative_indices, lbs, ubs, cols)
+                remove_constraint(m, row, rhs_s)
+                push!(redundant_constraints, row)
+                num_redundant_constraints += 1
             elseif rhs < constraint_lb
                 error("Infeasible!")
             end
-        end
-
-        if sense == '>'
-            if rhs <= constraint_lb && row_exists
+        elseif sense == '>'
+            if rhs <= constraint_lb
                 remove_constraint(m, row, rhs_s)
                 push!(redundant_constraints, row)
                 num_redundant_constraints += 1
-                row_exists = false
-            end
-            if rhs == constraint_ub
-                # TODO
+            elseif rhs == constraint_ub
+                fix_to_constraint_ub(positive_indices, negative_indices, lbs, ubs, cols)
+                remove_constraint(m, row, rhs_s)
+                push!(redundant_constraints, row)
+                num_redundant_constraints += 1
             elseif rhs > constraint_ub
                 error("Infeasible!")
             end
