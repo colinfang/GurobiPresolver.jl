@@ -10,6 +10,13 @@ Sometimes we want to solve a batch of very similar models derived from a base mo
 
 Note: It only works for MILP (Mixed Integer Linear Programming) without sos.
 
+## Techniques Applied
+
+- Variable Bounding
+- Variable Fixing
+- Constraint Bounding
+- Synonym Substitution
+
 ## Example
 
 ```{julia}
