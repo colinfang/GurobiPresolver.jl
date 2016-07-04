@@ -33,6 +33,7 @@ end
 
 
 function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mapping::Dict{Int, Int})
+    println("test_model_equivalence starts.")
     # Set MIPGap to 0 in order to perform exact check.
     setparams!(a, LogToConsole=0, Threads=1, MIPGap=0.0)
     setparams!(b, LogToConsole=0, Threads=1, MIPGap=0.0)
@@ -108,6 +109,15 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
     t(:minimize)
     t(:maximize)
 
+    test_variable_fixing(a, variable_mapping)
+    test_synonym_substitution(a, variable_mapping)
+
+    time_a, time_b, iter_a, iter_b
+end
+
+
+function test_variable_fixing(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
+    println("test_variable_fixing starts.")
     for col in 1:num_vars(a)
         if !haskey(variable_mapping, col)
             # The variable is fixed.
@@ -128,10 +138,53 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
             @test v_min == v_max
         end
     end
-
-    time_a, time_b, iter_a, iter_b
 end
 
 
+function test_synonym_substitution(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
+    println("test_synonym_substitution starts.")
+    synonyms_by_mapped_col = Dict{Int, Set{Int}}()
+    for (x, mapped_col) in variable_mapping
+        if haskey(synonyms_by_mapped_col, mapped_col)
+            push!(synonyms_by_mapped_col[mapped_col], x)
+        else
+            synonyms_by_mapped_col[mapped_col] = Set(x)
+        end
+    end
+
+    # Remove 1 to 1 mapping.
+    # The remaining is a list of synonyms.
+    for k in collect(keys(synonyms_by_mapped_col))
+        if length(synonyms_by_mapped_col[k]) < 2
+            delete!(synonyms_by_mapped_col, k)
+        end
+    end
+
+    for s in values(synonyms_by_mapped_col)
+        l = collect(s)
+        for i in 1:(length(l) - 1)
+            col1 = l[i]
+            col2 = l[i + 1]
+            # Test col1 - col2 = 0
+            set_dblattrelement!(a, "Obj", col1, 1.0)
+            set_dblattrelement!(a, "Obj", col2, -1.0)
+
+            Gurobi.set_intattr!(a, "ModelSense", 1)
+            optimize(a)
+            v_min = get_objval(a)
+            Gurobi.set_intattr!(a, "ModelSense", -1)
+            optimize(a)
+            v_max = get_objval(a)
+
+            set_dblattrelement!(a, "Obj", col1, 0.0)
+            set_dblattrelement!(a, "Obj", col2, 0.0)
+
+            if v_min != v_max
+                error("Variable $col1 - $col2 should be 0 yet $(v_min) != $(v_max)!")
+            end
+            @test v_min == v_max
+        end
+    end
+end
 
 include("test_milp1.jl")

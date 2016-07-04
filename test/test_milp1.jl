@@ -1,4 +1,5 @@
 function test_milp1()
+    println("This could take about 2 mins.")
     env = Gurobi.Env()
     original_model = Gurobi.Model(env, "original")
     read_model(original_model, "milp1.mps")
