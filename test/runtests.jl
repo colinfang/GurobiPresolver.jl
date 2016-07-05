@@ -46,7 +46,7 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
     iter_a = 0
     iter_b = 0
 
-    function t(sense::Symbol)
+    function t(sense::Symbol, values::Vector{Float64})
         slowest_time = 0.0
         slowest_col = -1
 
@@ -101,13 +101,30 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
 
                 set_dblattrelement!(a, "Obj", col, 0.0)
                 set_dblattrelement!(b, "Obj", mapped_col, 0.0)
+
+                values[col] = obj_a
             end
         end
         println("Slowest time for $sense is $(slowest_col) with $(slowest_time) sec.")
     end
 
-    t(:minimize)
-    t(:maximize)
+    min_values = Array(Float64, num_vars(a))
+    max_values = Array(Float64, num_vars(a))
+
+    t(:minimize, min_values)
+    t(:maximize, max_values)
+
+    num_fixed = 0
+    for col in eachindex(min_values)
+        if haskey(variable_mapping, col)
+            mapped_col = variable_mapping[col]
+            if min_values[col] == max_values[col]
+                num_fixed += 1
+                # println("Variable $col ($(mapped_col)) is actually fixed to $(min_values[col]).")
+            end
+        end
+    end
+    println("There are $(num_fixed) more variables fixed that we fail to detect.")
 
     test_variable_fixing(a, variable_mapping)
     test_synonym_substitution(a, variable_mapping)
