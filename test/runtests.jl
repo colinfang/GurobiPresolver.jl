@@ -5,35 +5,10 @@ using Gurobi
 using Logging
 #Logging.configure(GurobiPresolver.LOGGER, level=INFO)
 
-
-function get_dblattrelement(model::Gurobi.Model, name::ASCIIString, element::Int)
-    a = Array(Float64, 1)
-    ret = ccall(
-        ("GRBgetdblattrelement", Gurobi.libgurobi), Cint,
-        (Ptr{Void}, Ptr{UInt8}, Cint, Ptr{Float64}),
-        model, name, element - 1, a
-    )
-    if ret != 0
-        throw(GurobiError(model.env, ret))
-    end
-    a[1]::Float64
-end
-
-function set_dblattrelement!(model::Gurobi.Model, name::ASCIIString, element::Int, v::Real)
-    ret = ccall(
-        ("GRBsetdblattrelement", Gurobi.libgurobi), Cint,
-        (Ptr{Void}, Ptr{UInt8}, Cint, Float64),
-        model, name, element - 1, v
-    )
-    if ret != 0
-        throw(GurobiError(model.env, ret))
-    end
-    nothing
-end
+# include("utils.jl")
 
 
 function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mapping::Dict{Int, Int})
-    println("test_model_equivalence starts.")
     # Set MIPGap to 0 in order to perform exact check.
     setparams!(a, LogToConsole=0, Threads=1, MIPGap=0.0)
     setparams!(b, LogToConsole=0, Threads=1, MIPGap=0.0)
@@ -64,8 +39,8 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
             if haskey(variable_mapping, col)
                 mapped_col = variable_mapping[col]
 
-                set_dblattrelement!(a, "Obj", col, 1.0)
-                set_dblattrelement!(b, "Obj", mapped_col, 1.0)
+                Gurobi.set_dblattrelement!(a, "Obj", col, 1.0)
+                Gurobi.set_dblattrelement!(b, "Obj", mapped_col, 1.0)
 
                 optimize(a)
                 optimize(b)
@@ -78,11 +53,11 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
                     vtype_a = Gurobi.get_charattrarray(a, "VType", 1, num_vars(a))[col]
                     vtype_b = Gurobi.get_charattrarray(b, "VType", 1, num_vars(b))[mapped_col]
 
-                    lb_a = get_dblattrelement(a, "LB", col)
-                    ub_a = get_dblattrelement(a, "UB", col)
+                    lb_a = Gurobi.get_dblattrelement(a, "LB", col)
+                    ub_a = Gurobi.get_dblattrelement(a, "UB", col)
 
-                    lb_b = get_dblattrelement(b, "LB", mapped_col)
-                    ub_b = get_dblattrelement(b, "UB", mapped_col)
+                    lb_b = Gurobi.get_dblattrelement(b, "LB", mapped_col)
+                    ub_b = Gurobi.get_dblattrelement(b, "UB", mapped_col)
 
                     println("Variable $col ($(vtype_a), [$(lb_a), $(ub_a)]) ~ $(mapped_col) ($(vtype_b), [$(lb_b), $(ub_b)])")
                     error("Different solutions: $(obj_a) != $(obj_b) for $(sense)!")
@@ -99,8 +74,8 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
                     slowest_time = run_time
                 end
 
-                set_dblattrelement!(a, "Obj", col, 0.0)
-                set_dblattrelement!(b, "Obj", mapped_col, 0.0)
+                Gurobi.set_dblattrelement!(a, "Obj", col, 0.0)
+                Gurobi.set_dblattrelement!(b, "Obj", mapped_col, 0.0)
 
                 values[col] = obj_a
             end
@@ -134,11 +109,10 @@ end
 
 
 function test_variable_fixing(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
-    println("test_variable_fixing starts.")
     for col in 1:num_vars(a)
         if !haskey(variable_mapping, col)
             # The variable is fixed.
-            set_dblattrelement!(a, "Obj", col, 1.0)
+            Gurobi.set_dblattrelement!(a, "Obj", col, 1.0)
 
             Gurobi.set_intattr!(a, "ModelSense", 1)
             optimize(a)
@@ -147,7 +121,7 @@ function test_variable_fixing(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
             optimize(a)
             v_max = get_objval(a)
 
-            set_dblattrelement!(a, "Obj", col, 0.0)
+            Gurobi.set_dblattrelement!(a, "Obj", col, 0.0)
 
             if v_min != v_max
                 error("Variable $col should be fixed yet $(v_min) != $(v_max)!")
@@ -159,7 +133,6 @@ end
 
 
 function test_synonym_substitution(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
-    println("test_synonym_substitution starts.")
     synonyms_by_mapped_col = Dict{Int, Set{Int}}()
     for (x, mapped_col) in variable_mapping
         if haskey(synonyms_by_mapped_col, mapped_col)
@@ -183,8 +156,8 @@ function test_synonym_substitution(a::Gurobi.Model, variable_mapping::Dict{Int, 
             col1 = l[i]
             col2 = l[i + 1]
             # Test col1 - col2 = 0
-            set_dblattrelement!(a, "Obj", col1, 1.0)
-            set_dblattrelement!(a, "Obj", col2, -1.0)
+            Gurobi.set_dblattrelement!(a, "Obj", col1, 1.0)
+            Gurobi.set_dblattrelement!(a, "Obj", col2, -1.0)
 
             Gurobi.set_intattr!(a, "ModelSense", 1)
             optimize(a)
@@ -193,8 +166,8 @@ function test_synonym_substitution(a::Gurobi.Model, variable_mapping::Dict{Int, 
             optimize(a)
             v_max = get_objval(a)
 
-            set_dblattrelement!(a, "Obj", col1, 0.0)
-            set_dblattrelement!(a, "Obj", col2, 0.0)
+            Gurobi.set_dblattrelement!(a, "Obj", col1, 0.0)
+            Gurobi.set_dblattrelement!(a, "Obj", col2, 0.0)
 
             if v_min != v_max
                 error("Variable $col1 - $col2 should be 0 yet $(v_min) != $(v_max)!")
@@ -205,3 +178,5 @@ function test_synonym_substitution(a::Gurobi.Model, variable_mapping::Dict{Int, 
 end
 
 include("test_milp1.jl")
+# include("test_variable_fixing.jl")
+# include("test_synonym_substitution.jl")
