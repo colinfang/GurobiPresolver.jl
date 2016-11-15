@@ -4,9 +4,12 @@ function test_milp1()
     original_model = Gurobi.Model(env, "original")
     read_model(original_model, "milp1.mps")
 
-    presolved_model, variable_mapping, constraint_mapping = preprocess(original_model)
+    # 0.045381 seconds (244.55 k allocations: 16.644 MB)
+    presolved_model, variable_mapping, constraint_mapping, variables = @time_fun preprocess(original_model)
 
+    # Default presolve.
     setparams!(original_model, Presolve=-1, LogToConsole=0)
+    # Turn off presolve.
     setparams!(presolved_model, Presolve=0, LogToConsole=0)#, LogFile="presolve_2.log")
 
     optimize(original_model)
@@ -14,6 +17,9 @@ function test_milp1()
 
     time_a, time_b, iter_a, iter_b =
         test_model_equivalence(original_model, presolved_model, variable_mapping)
+
+    @time_fun test_variable_fixing(original_model, variable_mapping, variables)
+    @time_fun test_synonym_substitution(original_model, variable_mapping)
 
 	grb_presolved_model = Gurobi.presolve_model(original_model)
 
@@ -25,9 +31,11 @@ function test_milp1()
     num_constr_presolved = num_constrs(presolved_model)
     num_constr_grb_presolved = num_constrs(grb_presolved_model)
 
-    println("Original model (#vars=$(num_vars_original), #constrs=$(num_consts_original)) takes $(time_a) sec.")
+    # 40 secs
+    println("Original model (#vars=$(num_vars_original), #constrs=$(num_consts_original)) takes $(time_a) sec to find min & max of $(num_vars_presolved) variables.")
     println("Gurobi presolved model (#vars=$(num_vars_grb_presolved), #constrs=$(num_constr_grb_presolved)).")
-    println("Presolved model (#vars=$(num_vars_presolved), #constrs=$(num_constr_presolved)) takes $(time_b) sec with $(iter_b) iterations.")
+    # 30 secs
+    println("Presolved model (#vars=$(num_vars_presolved), #constrs=$(num_constr_presolved)) takes $(time_b) sec with $(iter_b) iterations to find min & max of $(num_vars_presolved) variables.")
 end
 
 

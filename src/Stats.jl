@@ -10,7 +10,7 @@ immutable VariableBoundingStats
     num_bounds_updates::Int
 end
 
-function Base.print(io::IO, x::VariableBoundingStats)
+function Base.show(io::IO, x::VariableBoundingStats)
     print(io, "VariableBoundingStats(#bounds_updates=$(x.num_bounds_updates), #row_updates=$(x.num_row_updates))")
 end
 
@@ -22,7 +22,7 @@ immutable VariableFixingStats
     num_simplified_terms::Int
 end
 
-function Base.print(io::IO, x::VariableFixingStats)
+function Base.show(io::IO, x::VariableFixingStats)
     print(io, "VariableFixingStats(#fixed_variables=$(x.num_fixed_variables), #simplified_terms=$(x.num_simplified_terms))")
 end
 
@@ -33,7 +33,7 @@ immutable ConstraintBoundingStats
     num_redundant_constraints::Int
 end
 
-function Base.print(io::IO, x::ConstraintBoundingStats)
+function Base.show(io::IO, x::ConstraintBoundingStats)
     print(io, "ConstraintBoundingStats(#redundant_constraints=$(x.num_redundant_constraints))")
 end
 
@@ -44,7 +44,7 @@ immutable SynonymSubstitutionStats
     num_synonyms_pair::Int
 end
 
-function Base.print(io::IO, x::SynonymSubstitutionStats)
+function Base.show(io::IO, x::SynonymSubstitutionStats)
     print(io, "SynonymSubstitutionStats(#synonyms_pair=$(x.num_synonyms_pair))")
 end
 
@@ -60,7 +60,7 @@ immutable PassStats
     num_effective_constraints::Int
 end
 
-function Base.print(io::IO, x::PassStats)
+function Base.show(io::IO, x::PassStats)
     print(io, "PassStats($(x.variable_fixing_stats), " *
         "$(x.synonym_substitution_stats), " *
         "$(x.variable_bounding_stats), $(x.constraint_bounding_stats), " *

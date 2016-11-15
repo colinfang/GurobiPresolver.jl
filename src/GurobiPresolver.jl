@@ -10,31 +10,15 @@ const LOGGER = Logger("$(current_module())")
 include("Stats.jl")
 using .Stats
 
+include("IterSparseMatrix.jl")
+using .IterSparseMatrix
+
+include("variable.jl")
+
 include("variable_fixing.jl")
 include("synonym_substitution.jl")
 include("variable_bounding.jl")
 include("constraint_bounding.jl")
-
-
-"""
-Check if a variable is integer (including binary).
-"""
-is_int(x::Char) = x == 'I' || x == 'B'
-
-
-function split_by_sign(coefs::Vector{Float64})
-    positive_indices = Int[]
-    negative_indices = Int[]
-    for i in eachindex(coefs)
-        coef = coefs[i]
-        if coef > 0
-            push!(positive_indices, i)
-        else
-            push!(negative_indices, i)
-        end
-    end
-    positive_indices, negative_indices
-end
 
 
 function update_equivalence_classes(equivalence_classes::Dict{Int, Set{Int}}, a::Int, b::Int)
@@ -64,19 +48,22 @@ function update_equivalence_classes(equivalence_classes::Dict{Int, Set{Int}}, a:
 end
 
 
+
+
 """
 - Called by `domain_propagate` only.
-- Union synonyms class that are fixed to `fixed`.
+- Move synonyms class that are fixed to `fixed` & update their bounds.
+- Redirect `x => y`, `y = z`, `a => y` to `a = z`, `y => z`, `x => z`
 - Return `(to_remove => representative)`
-- All of which are not fixed.
-- `to_remove` != `representative`.
+- `to_remove` > `representative`
 - All `to_remove` can be safely removed.
 """
-function get_synonym_redirection(
+function redirect_synonyms(
+        variables::Vector{Variable},
         synonyms::Dict{Int, Int}, fixed::Set{Int},
-        lbs::Vector{Float64}, ubs::Vector{Float64}
     )
-    # synonyms may contain x => y, y => z, a => y
+    num_synonyms_pair = length(synonyms)
+    num_fixed = length(fixed)
 
     synonym_classes = Dict{Int, Set{Int}}()
 
@@ -90,13 +77,13 @@ function get_synonym_redirection(
         fixed_lot = intersect(eq_class, fixed)
         if !isempty(fixed_lot)
             # As long as there is one fixed, all eq_class are fixed.
-            the_fixed_one = first(fixed_lot)
+            the_fixed_one = variables[first(fixed_lot)]
 
             for x in eq_class
                 if !(x in fixed)
                     # Update bounds.
-                    lbs[x] = lbs[the_fixed_one]
-                    ubs[x] = ubs[the_fixed_one]
+                    variables[x].lb = the_fixed_one.lb
+                    variables[x].ub = the_fixed_one.ub
                     push!(fixed, x)
                 end
             end
@@ -110,30 +97,47 @@ function get_synonym_redirection(
         end
     end
 
+    info(LOGGER, "redirect_synonyms #fixed $(num_fixed) => $(length(fixed)), #synonyms $(num_synonyms_pair) => $(length(redirection))")
     redirection
 end
 
 
 function domain_propagate(
         m, senses::Vector{Char}, rhs_s::Vector{Float64},
-        lbs::Vector{Float64}, ubs::Vector{Float64}, vtypes::Vector{Char}
+        variables::Vector{Variable};
+        variable_fixing::Bool=true,
+        synonym_substitution::Bool=true,
+        variable_bounding::Bool=true,
+        constraint_bounding::Bool=true,
+        max_num_passes::Int=20
     )
     fixed = Set{Int}()
     redundant_constraints = Set{Int}()
     synonyms = Dict{Int, Int}()
-    tighten_bounds_for_integers(lbs, ubs, vtypes)
+
+    debug(LOGGER, "Start initial bounds reductions for integers.")
+
+    map(tighten_bounds, variables)
+
     updated = true
     pass = 0
-    while updated
+    while updated && pass < max_num_passes
         pass += 1
         info(LOGGER, "Pass $pass starts.")
 
-        variable_fixing_stats = apply_variable_fixing(m, fixed, lbs, ubs, rhs_s)
-        #synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
-        synonym_substitution_stats = SynonymSubstitutionStats(0)
-        variable_bounding_stats = apply_variable_bounding(m, senses, rhs_s, lbs, ubs, vtypes)
-        constraint_bounding_stats = apply_constraint_bounding(m, senses, rhs_s, lbs, ubs, redundant_constraints)
-
+        variable_fixing_stats = variable_bounding ?
+            apply_variable_fixing(m, fixed, variables, rhs_s) :
+            VariableFixingStats(0, 0)
+        synonym_substitution_stats = synonym_substitution ?
+            apply_synonym_substitution(m, senses, rhs_s, variables, redundant_constraints, synonyms) :
+            SynonymSubstitutionStats(0)
+        variable_bounding_stats = variable_bounding ?
+            apply_variable_bounding(m, senses, rhs_s, variables, redundant_constraints) :
+            VariableBoundingStats(0, 0)
+        constraint_bounding_stats = constraint_bounding ?
+            apply_constraint_bounding(m, senses, rhs_s, variables, redundant_constraints) :
+            ConstraintBoundingStats(0)
+        # TODO?
         # Do not consider synonyms, as they can be fixed.
         num_effective_variables = size(m, 2) - length(fixed)
         num_effective_constraints = size(m, 1) - length(redundant_constraints)
@@ -149,92 +153,63 @@ function domain_propagate(
             has_updated(variable_bounding_stats) ||
             has_updated(constraint_bounding_stats)
 
+        dropzeros!(m)
         info(LOGGER, "Pass $pass $(pass_stats).")
     end
-    #synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
-    #synonym_substitution_stats = apply_synonym_substitution(m, senses, rhs_s, lbs, ubs, vtypes, redundant_constraints, synonyms)
-    synonym_redirection = get_synonym_redirection(synonyms, fixed, lbs, ubs)
+
+    # Make a better `synonym`.
+    synonyms = redirect_synonyms(variables, synonyms, fixed)
+    fixed, redundant_constraints, synonyms
+end
+
+function post_domain_propagate_check(
+        variables::Vector{Variable},
+        rhs_s::Vector{Float64},
+        synonyms::Dict{Int, Int},
+        fixed::Set{Int},
+        redundant_constraints::Set{Int}
+    )
+
+    for col in fixed
+        x = variables[col]
+        if x.lb != x.ub
+            error("$x in fixed yet lb != ub")
+        end
+    end
 
     num_fixed = length(fixed)
-    num_synonyms_pair = length(synonym_redirection)
+    num_synonyms_pair = length(synonyms)
     num_redundant_constraints = length(redundant_constraints)
 
-    num_effective_variables = length(vtypes) - num_fixed
-    # Here do not considering the remaining part of synonyms.
+    num_effective_variables = length(variables) - num_fixed - num_synonyms_pair
     num_effective_constraints = length(rhs_s) - num_redundant_constraints
 
     info(LOGGER, "Finally #fixed=$(num_fixed), #redundant_constraints=$(num_redundant_constraints), #synonyms=$(num_synonyms_pair).")
     info(LOGGER, "Finally #effected_variables=$(num_effective_variables), #effective_constraints=$(num_effective_constraints).")
-    fixed, redundant_constraints, synonym_redirection
 end
-
-
-"""
-Called by `tighten_bounds_for_integers` only.
-"""
-function tighten_ub_for_integer(col::Int, ubs::Vector{Float64}, vtype::Char)
-    ub = ubs[col]
-    if is_int(vtype)
-        x = floor(ub)
-        if x < ub
-            debug(LOGGER, "Reduce variable $(col) ub to integer: $ub -> $x")
-            ubs[col] = x
-            return true
-        end
-    end
-    false
-end
-
-"""
-Called by `tighten_bounds_for_integers` only.
-"""
-function tighten_lb_for_integer(col::Int, lbs::Vector{Float64}, vtype::Char)
-    lb = lbs[col]
-    if is_int(vtype)
-        x = ceil(lb)
-        if x > lb
-            debug(LOGGER, "Reduce Variable $(col) lb to integer: $lb -> $x")
-            lbs[col] = x
-            return true
-        end
-    end
-    false
-end
-
-
-function tighten_bounds_for_integers(lbs::Vector{Float64}, ubs::Vector{Float64}, vtypes::Vector{Char})
-    debug(LOGGER, "Start initial bounds reductions for integers.")
-    for col in eachindex(lbs)
-        vtype = vtypes[col]
-        if lbs[col] > ubs[col]
-            error("Infeasible!")
-        end
-        tighten_lb_for_integer(col, lbs, vtype)
-        tighten_ub_for_integer(col, ubs, vtype)
-    end
-end
-
-
 
 
 function build_model(
-        m, vtypes::Vector{Char}, lbs::Vector{Float64}, ubs::Vector{Float64},
+        m, variables::Vector{Variable},
         senses::Vector{Char}, rhs_s::Vector{Float64},
         fixed::Set{Int}, redundant_constraints::Set{Int},
-        synonym_redirection::Dict{Int, Int},
+        synonyms::Dict{Int, Int},
         essential_variables::Set{Int}
     )
     env = Gurobi.Env()
     model = Gurobi.Model(env, "presolved")
 
-    vtypes_new, lbs_new, ubs_new, variable_mapping = reduce_model_variables(
-        fixed, synonym_redirection, vtypes, lbs, ubs, essential_variables
-    )
-    A, rhs_new, senses_new, constraint_mapping = reduce_model_constraints(
-        length(vtypes_new), variable_mapping, m, redundant_constraints, rhs_s, senses
+    variables_new, variable_mapping = reduce_model_variables(
+        fixed, synonyms, variables, essential_variables
     )
 
-    add_vars!(model, vtypes_new, zeros(length(vtypes_new)), lbs_new, ubs_new)
+    A, rhs_new, senses_new, constraint_mapping = reduce_model_constraints(
+        length(variables_new), variable_mapping, m, redundant_constraints, rhs_s, senses
+    )
+
+    lbs, ubs, vtypes = from_variables(variables_new)
+
+    add_vars!(model, vtypes, zeros(length(variables_new)), lbs, ubs)
     update_model!(model)
     add_constrs!(model, A, senses_new, rhs_new)
     update_model!(model)
@@ -245,18 +220,20 @@ end
 """
 - Called by `reduce_model_variables` only.
 - We only care about variables that are fixed and essential.
+- We want to leave only 1 variable in the model,
+- so that additional constraints refering to these variables can be added later.
 - Return `to_remove => representative`.
-- `to_remove` != `representative`.
+- `to_remove` > `representative`
 - All `to_remove` can be safely removed.
 """
-function get_fixed_essential_variable_redirection(fixed::Set{Int}, essential_variables::Set{Int}, lbs::Vector{Float64})
-    to_compress = intersect(fixed, essential_variables)
-    # Nothing in to_compress is in removable_fixed.
+function get_fixed_essential_variable_redirection(
+        fixed_essential::Set{Int},
+        variables::Vector{Variable}
+    )
     redirection = Dict{Int, Int}()
-
     synonyms_by_value = Dict{Float64, Set{Int}}()
-    for x in to_compress
-        v = lbs[x]
+    for x in fixed_essential
+        v = variables[x].lb
         if haskey(synonyms_by_value, v)
             push!(synonyms_by_value[v], x)
         else
@@ -277,21 +254,25 @@ function get_fixed_essential_variable_redirection(fixed::Set{Int}, essential_var
     redirection, length(synonyms_by_value)
 end
 
-
+"""
+- Return `variables_new`.
+- Return `variable_mapping`, which is `col_old => col_new`.
+- Variables that are not in `variable_map` are fixed & removed.
+"""
 function reduce_model_variables(
-        fixed::Set{Int}, synonym_redirection::Dict{Int, Int},
-        vtypes::Vector{Char}, lbs::Vector{Float64}, ubs::Vector{Float64},
+        fixed::Set{Int}, synonyms::Dict{Int, Int},
+        variables::Vector{Variable},
         essential_variables::Set{Int}
     )
-    num_cols = length(vtypes)
     # In best case, all variables in fixed can be removed, as constraints have no references to them.
-
     removable_fixed = setdiff(fixed, essential_variables)
-    redirection, num_extra_kept = get_fixed_essential_variable_redirection(fixed, essential_variables, lbs)
+    # Nothing in `fixed_essential`` is in removable_fixed.
+    fixed_essential = intersect(fixed, essential_variables)
+    redirection, num_extra_kept = get_fixed_essential_variable_redirection(fixed_essential, variables)
     # All variables in the left one is fixed.
     # All variables in the right one is not fixed.
     # So there are no key conflictions.
-    merge!(redirection, synonym_redirection)
+    merge!(redirection, synonyms)
 
     num_to_remove = length(removable_fixed) + length(redirection)
 
@@ -299,31 +280,27 @@ function reduce_model_variables(
         info(LOGGER, "Could have removed $(num_extra_kept) more variables if essential_variables were empty.")
     end
 
-    num_cols_new = num_cols - num_to_remove
-    vtypes_new = Array(Char, num_cols_new)
-    lbs_new = Array(Float64, num_cols_new)
-    ubs_new = Array(Float64, num_cols_new)
-
+    num_cols_new = length(variables) - num_to_remove
+    variables_new = Array(Variable, num_cols_new)
     variable_mapping = Dict{Int, Int}()
 
     i = 0
-    for col in 1:num_cols
-        if col in removable_fixed
+    # `col` from small to big.
+    for x in variables
+        if x.id in removable_fixed
             continue
         end
-        if haskey(redirection, col)
-            representative = redirection[col]
-            # Since representative < col, it has already a mapping.
-            variable_mapping[col] = variable_mapping[representative]
+        if haskey(redirection, x.id)
+            representative = redirection[x.id]
+            # Since representative < x.id, it has already a mapping.
+            variable_mapping[x.id] = variable_mapping[representative]
             continue
         end
         i += 1
-        vtypes_new[i] = vtypes[col]
-        lbs_new[i] = lbs[col]
-        ubs_new[i] = ubs[col]
-        variable_mapping[col] = i
+        variables_new[i] = x
+        variable_mapping[x.id] = i
     end
-    vtypes_new, lbs_new, ubs_new, variable_mapping
+    variables_new, variable_mapping
 end
 
 
@@ -354,8 +331,7 @@ function reduce_model_constraints(
         senses_new[i] = senses[row]
         constraint_mapping[row] = i
 
-        I, J, V = findnz(m[row, :])
-        for (col, coef) in zip(J, V)
+        for (col, coef) in zip(findnz(m[row, :])...)
             A[i, variable_mapping[col]] = coef
         end
     end
@@ -369,29 +345,24 @@ function preprocess(model::Gurobi.Model, essential_variables::Set{Int}=Set{Int}(
         error("Only works with MILP!")
     end
 
-    lbs = Gurobi.lowerbounds(model)
-    ubs = Gurobi.upperbounds(model)
-    vtypes = Gurobi.get_charattrarray(model, "VType", 1, num_vars(model))
     rhs_s = Gurobi.get_dblattrarray(model, "RHS", 1, num_constrs(model))
     senses = Gurobi.get_charattrarray(model, "Sense", 1, num_constrs(model))
 
-    #if length(lbs) < 10
-    #    @show lbs
-    #    @show ubs
-    #    @show vtypes
-    #    @show rhs_s
-    #    @show senses
-    #    println()
-    #end
+    variables = get_variables(model)
 
     m = get_constrmatrix(model)
-    fixed, redundant_constraints, synonym_redirection = domain_propagate(m, senses, rhs_s, lbs, ubs, vtypes)
+
+    fixed, redundant_constraints, synonyms = domain_propagate(m, senses, rhs_s, variables)
+
+    post_domain_propagate_check(
+        variables, rhs_s, synonyms, fixed, redundant_constraints
+    )
 
     presolved_model, variable_mapping, constraint_mapping = build_model(
-        m, vtypes, lbs, ubs, senses, rhs_s,
-        fixed, redundant_constraints, synonym_redirection, essential_variables
+        m, variables, senses, rhs_s,
+        fixed, redundant_constraints, synonyms, essential_variables
     )
-    presolved_model, variable_mapping, constraint_mapping
+    presolved_model, variable_mapping, constraint_mapping, variables
 end
 
 

@@ -3,11 +3,16 @@ using Base.Test
 
 using Gurobi
 using Logging
+
+using GurobiPresolver: Variable
 #Logging.configure(GurobiPresolver.LOGGER, level=INFO)
 
-# include("utils.jl")
+include("utils.jl")
 
 
+"""
+Check keys in `variable_mapping` have correct min, max.
+"""
 function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mapping::Dict{Int, Int})
     # Set MIPGap to 0 in order to perform exact check.
     setparams!(a, LogToConsole=0, Threads=1, MIPGap=0.0)
@@ -95,24 +100,26 @@ function test_model_equivalence(a::Gurobi.Model, b::Gurobi.Model, variable_mappi
             mapped_col = variable_mapping[col]
             if min_values[col] == max_values[col]
                 num_fixed += 1
-                # println("Variable $col ($(mapped_col)) is actually fixed to $(min_values[col]).")
+                if num_fixed < 10
+                    println("Variable $col ($(mapped_col)) is actually fixed to $(min_values[col]).")
+                end
             end
         end
     end
     println("There are $(num_fixed) more variables fixed that we fail to detect.")
 
-    test_variable_fixing(a, variable_mapping)
-    test_synonym_substitution(a, variable_mapping)
-
     time_a, time_b, iter_a, iter_b
 end
 
 
-function test_variable_fixing(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
-    for col in 1:num_vars(a)
-        if !haskey(variable_mapping, col)
+function test_variable_fixing(
+        a::Gurobi.Model, variable_mapping::Dict{Int, Int},
+        variables::Vector{Variable}
+    )
+    for x in variables
+        if !haskey(variable_mapping, x.id)
             # The variable is fixed.
-            Gurobi.set_dblattrelement!(a, "Obj", col, 1.0)
+            Gurobi.set_dblattrelement!(a, "Obj", x.id, 1.0)
 
             Gurobi.set_intattr!(a, "ModelSense", 1)
             optimize(a)
@@ -121,12 +128,11 @@ function test_variable_fixing(a::Gurobi.Model, variable_mapping::Dict{Int, Int})
             optimize(a)
             v_max = get_objval(a)
 
-            Gurobi.set_dblattrelement!(a, "Obj", col, 0.0)
+            Gurobi.set_dblattrelement!(a, "Obj", x.id, 0.0)
 
-            if v_min != v_max
-                error("Variable $col should be fixed yet $(v_min) != $(v_max)!")
+            if !(x.lb == x.ub == v_min == v_max)
+                error("$x should be fixed and have true lb = $(v_min), ub = $(v_max)")
             end
-            @test v_min == v_max
         end
     end
 end
@@ -172,11 +178,11 @@ function test_synonym_substitution(a::Gurobi.Model, variable_mapping::Dict{Int, 
             if v_min != v_max
                 error("Variable $col1 - $col2 should be 0 yet $(v_min) != $(v_max)!")
             end
-            @test v_min == v_max
         end
     end
 end
 
 include("test_milp1.jl")
-# include("test_variable_fixing.jl")
-# include("test_synonym_substitution.jl")
+include("test_variable_fixing.jl")
+include("test_synonym_substitution.jl")
+include("test_variable_bounding.jl")

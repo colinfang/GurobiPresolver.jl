@@ -1,19 +1,21 @@
-# synonyms is removed => representative
-# removed > representative
-
+"""
+- `synonyms` is `to_remove.id => representative.id`.
+- `to_remove.id > representative.id`.
+"""
 function apply_synonym_substitution(
         m, senses::Vector{Char}, rhs_s::Vector{Float64},
-        lbs::Vector{Float64}, ubs::Vector{Float64}, vtypes::Vector{Char},
+        variables::Vector{Variable},
         redundant_constraints::Set{Int},
         synonyms::Dict{Int, Int}
-    )
+    )::SynonymSubstitutionStats
     mt = transpose(m)
-    mt_nzval = nonzeros(mt)
-    mt_rowval = rowvals(mt)
-    num_synonyms_pair = 0
+    mt_vals = nonzeros(mt)
+    mt_rows = rowvals(mt)
 
-    # m is modified
-    for row in 1:size(m, 1)
+    synonyms_new = Dict{Int, Int}()
+
+    # `m` is not modified in the following loop.
+    for (row, row_element) in enumerate(m, Val{:row})
         if !(senses[row] == '=' && rhs_s[row] == 0.0)
             continue
         end
@@ -22,61 +24,62 @@ function apply_synonym_substitution(
             continue
         end
 
-        mt_col = row
-        mt_nzrange = nzrange(mt, mt_col)
-        if isempty(mt_nzrange)
-            # Empty column in mt => empty row in m.
-            # Constraint may be deleted by apply_variable_fixing.
+        if isempty(row_element)
             push!(redundant_constraints, row)
             continue
         end
 
-        if length(mt_nzrange) != 2
+        if length(row_element) != 2
             continue
         end
 
-        coef1, coef2 = mt_nzval[mt_nzrange]
+        (col1, coef1), (col2, coef2) = enumerate(row_element)
+
+        if coef1 == 0 && coef2 == 0
+            push!(redundant_constraints, row)
+            continue
+        end
+
         if coef1 + coef2 != 0.0
             continue
         end
 
-        # Now col1, col2 are synonyms.
-        col1, col2 = mt_rowval[mt_nzrange]
+        # Now `col1`, `col2` are synonyms.
 
-        representative = min(col1, col2)
-        to_remove = max(col1, col2)
+        representative = variables[min(col1, col2)]
+        to_remove = variables[max(col1, col2)]
 
-        if haskey(synonyms, to_remove)
-            # In 1 pass, it is possible to have x => y, x => z.
-            # Because when dealing with x => y, m is modified, but mt is not.
+        if haskey(synonyms_new, to_remove.id)
+            # In a pass, it is possible to have `c => x`, `c => y`.
             # In such case we skip till next pass.
             continue
         end
 
-        num_synonyms_pair += 1
-        debug(LOGGER, "Detected synonyms pair variable $(to_remove) => $representative from constraint $row.")
+        debug(LOGGER, "Detect synonyms pair $(to_remove) => $representative from constraint $row.")
 
-        vtype_representative = vtypes[representative]
-        if vtypes[to_remove] == 'B' && vtype_representative != 'B'
-            vtypes[representative] == 'B'
-            info(LOGGER, "Update representative variable $representative vtype $(vtype_representative) => B.")
-        elseif vtypes[to_remove] == 'I' && !is_int(vtype_representative)
-            vtypes[representative] == 'I'
-            info(LOGGER, "Update representative variable $representative vtype $(vtype_representative) => I.")
-        end
-
-        m[:, representative] += m[:, to_remove]
-        m[:, to_remove] = 0.0
-        # So that m[row, :] = 0.0 is not necessary.
-
-        tighten_lb(representative, lbs[to_remove], lbs, vtypes[representative])
-        tighten_ub(representative, ubs[to_remove], ubs, vtypes[representative])
-        # Note, bounds of to_remove is not changed.
-        synonyms[to_remove] = representative
+        synonyms_new[to_remove.id] = representative.id
         push!(redundant_constraints, row)
     end
 
-    SynonymSubstitutionStats(num_synonyms_pair)
+    # Merge coefs of `to_remove` into `representative`.
+    # This would change structure of `m`.
+    # Make sure it correctly handles `c => b`, `b => a` in bounds & constraints.
+    for col in sort(collect(keys(synonyms_new)), rev=true)
+        if haskey(synonyms_new, col)
+            representative = variables[synonyms_new[col]]
+            to_remove = variables[col]
+            # `to_remove` is unmodified.
+            tighten_by(representative, to_remove)
+
+            m[:, representative.id] += m[:, col]
+            m[:, col] = 0.0
+        end
+    end
+
+    # Here all `to_remove.id` columns are removed from `m`.
+    # There shouldn't be key conflictions.
+    merge!(synonyms, synonyms_new)
+    SynonymSubstitutionStats(length(synonyms_new))
 end
 
 
