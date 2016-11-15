@@ -1,6 +1,8 @@
 module Stats
 
-export VariableBoundingStats, VariableFixingStats, ConstraintBoundingStats, SynonymSubstitutionStats
+export VariableBoundingStats, VariableFixingStats
+export ConstraintBoundingStats, SynonymSubstitutionStats
+export ConstraintSimplificationStats
 export PassStats
 export has_updated
 
@@ -49,6 +51,15 @@ function Base.show(io::IO, x::SynonymSubstitutionStats)
 end
 
 has_updated(x::SynonymSubstitutionStats) = x.num_synonyms_pair > 0
+
+
+immutable ConstraintSimplificationStats
+    num_simplified_constraints::Int
+end
+
+function Base.show(io::IO, x::ConstraintSimplificationStats)
+    print(io, "ConstraintSimplificationStats(#simplified_constraints=$(x.num_simplified_constraints))")
+end
 
 
 immutable PassStats

@@ -19,6 +19,7 @@ include("variable_fixing.jl")
 include("synonym_substitution.jl")
 include("variable_bounding.jl")
 include("constraint_bounding.jl")
+include("constraint_simplification.jl")
 
 
 function update_equivalence_classes(equivalence_classes::Dict{Int, Set{Int}}, a::Int, b::Int)
@@ -109,6 +110,7 @@ function domain_propagate(
         synonym_substitution::Bool=true,
         variable_bounding::Bool=true,
         constraint_bounding::Bool=true,
+        constraint_simplification::Bool=true,
         max_num_passes::Int=20
     )
     fixed = Set{Int}()
@@ -157,6 +159,11 @@ function domain_propagate(
         info(LOGGER, "Pass $pass $(pass_stats).")
     end
 
+    # Do it once is enough.
+    constraint_simplification_stats = constraint_simplification ?
+        apply_constraint_simplification(m, senses, rhs_s, variables, redundant_constraints) :
+        ConstraintSimplificationStats(0)
+    info(LOGGER, "$(constraint_simplification_stats).")
     # Make a better `synonym`.
     synonyms = redirect_synonyms(variables, synonyms, fixed)
     fixed, redundant_constraints, synonyms

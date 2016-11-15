@@ -8,9 +8,6 @@ function apply_synonym_substitution(
         redundant_constraints::Set{Int},
         synonyms::Dict{Int, Int}
     )::SynonymSubstitutionStats
-    mt = transpose(m)
-    mt_vals = nonzeros(mt)
-    mt_rows = rowvals(mt)
 
     synonyms_new = Dict{Int, Int}()
 
