@@ -107,10 +107,10 @@ function domain_propagate(
         m, senses::Vector{Char}, rhs_s::Vector{Float64},
         variables::Vector{Variable};
         variable_fixing::Bool=true,
-        synonym_substitution::Bool=true,
+        synonym_substitution::Bool=false,
         variable_bounding::Bool=true,
         constraint_bounding::Bool=true,
-        constraint_simplification::Bool=true,
+        constraint_simplification::Bool=false,
         max_num_passes::Int=20
     )
     fixed = Set{Int}()
