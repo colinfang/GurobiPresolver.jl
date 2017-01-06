@@ -11,9 +11,13 @@ Note: It only works for MILP (Mixed Integer Linear Programming) without sos.
 ## Techniques
 
 - Variable Bounding - Tighten a variable bounds using other variables bounds as well as rhs values.
+    - Ref 3.2
 - Variable Fixing - If a variable has the same lower & upper bounds, its corresponding constraints can be simplified.
-- Constraint Bounding - Remove constraints if rhs are not helpful. Fix variables in a constraint if its lhs attend extrema at rhs.
+- Constraint Bounding - Remove constraints if rhs are not helpful.
+    - Ref 3.1
 - Synonym Substitution - If the constraint looks like `a * x - a * y = 0`, `x` & `y` are synonyms. Their constraints and bounds can be merged.
+- Coefficient Strengthening - ...
+    - Ref 3.3
 
 ## Example
 

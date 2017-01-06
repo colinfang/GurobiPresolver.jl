@@ -3,179 +3,135 @@ module GurobiPresolver
 export preprocess
 
 using Gurobi
-using Logging
+using MiniLogging
+using Parameters
 
-const LOGGER = Logger("$(current_module())")
-
-include("Stats.jl")
-using .Stats
+const LOGGER = get_logger(current_module())
 
 include("IterSparseMatrix.jl")
 using .IterSparseMatrix
 
-include("variable.jl")
+include("Variables.jl")
+using .Variables
 
-include("variable_fixing.jl")
-include("synonym_substitution.jl")
-include("variable_bounding.jl")
-include("constraint_bounding.jl")
-include("constraint_simplification.jl")
+include("Rules.jl")
+using .Rules
+
+include("Models.jl")
+using .Models
+
+include("VariableFixing.jl")
+using .VariableFixing
+include("SynonymSubstitution.jl")
+using .SynonymSubstitution
+include("VariableBounding.jl")
+using .VariableBounding
+include("ConstraintReduction.jl")
+using .ConstraintReduction
+include("CoefficientStrengthening.jl")
+using .CoefficientStrengthening
+include("ImpliedFreeVariableSubstitution.jl")
+using .ImpliedFreeVariableSubstitution
+include("ConstraintSimplification.jl")
+using .ConstraintSimplification
 
 
-function update_equivalence_classes(equivalence_classes::Dict{Int, Set{Int}}, a::Int, b::Int)
-	if haskey(equivalence_classes, a)
-		eq_class1 = equivalence_classes[a]
-		if !haskey(equivalence_classes, b)
-			equivalence_classes[b] = eq_class1
-			push!(eq_class1, b)
-		else
-			eq_class2 = equivalence_classes[b]
-			# Modify eq_class1 as union of eq_class1, eq_class2.
-			union!(eq_class1, eq_class2)
-			push!(eq_class1, b)
-			# Redirect eq_class2 to eq_class1
-			for x in eq_class2
-				equivalence_classes[x] = eq_class1
-			end
-		end
-	elseif haskey(equivalence_classes, b)
-		update_equivalence_classes(equivalence_classes, b, a)
-	else
-		# Neither of them have equivalence_class.
-		eq_class = Set([a, b])
-		equivalence_classes[a] = eq_class
-		equivalence_classes[b] = eq_class
-	end
-end
+include("simplify_substitutions.jl")
+
+# Do not push!(redundant_constraints, row)
+# Always use `remove_constraint(m, row, rhs_s, redundant_constraints)` instead.
+# So that rows in redundant_constraints are zeroed in the model.
 
 
 
+# function update_equivalence_classes(equivalence_classes::Dict{Int, Set{Int}}, a::Int, b::Int)
+# 	if haskey(equivalence_classes, a)
+# 		eq_class1 = equivalence_classes[a]
+# 		if !haskey(equivalence_classes, b)
+# 			equivalence_classes[b] = eq_class1
+# 			push!(eq_class1, b)
+# 		else
+# 			eq_class2 = equivalence_classes[b]
+# 			# Modify eq_class1 as union of eq_class1, eq_class2.
+# 			union!(eq_class1, eq_class2)
+# 			push!(eq_class1, b)
+# 			# Redirect eq_class2 to eq_class1
+# 			for x in eq_class2
+# 				equivalence_classes[x] = eq_class1
+# 			end
+# 		end
+# 	elseif haskey(equivalence_classes, b)
+# 		update_equivalence_classes(equivalence_classes, b, a)
+# 	else
+# 		# Neither of them have equivalence_class.
+# 		eq_class = Set([a, b])
+# 		equivalence_classes[a] = eq_class
+# 		equivalence_classes[b] = eq_class
+# 	end
+# end
 
-"""
-- Called by `domain_propagate` only.
-- Move synonyms class that are fixed to `fixed` & update their bounds.
-- Redirect `x => y`, `y = z`, `a => y` to `a = z`, `y => z`, `x => z`
-- Return `(to_remove => representative)`
-- `to_remove` > `representative`
-- All `to_remove` can be safely removed.
-"""
-function redirect_synonyms(
-        variables::Vector{Variable},
-        synonyms::Dict{Int, Int}, fixed::Set{Int},
-    )
-    num_synonyms_pair = length(synonyms)
-    num_fixed = length(fixed)
 
-    synonym_classes = Dict{Int, Set{Int}}()
-
-    for (a, b) in synonyms
-        update_equivalence_classes(synonym_classes, a, b)
-    end
-
-    redirection = Dict{Int, Int}()
-
-    for eq_class in values(synonym_classes)
-        fixed_lot = intersect(eq_class, fixed)
-        if !isempty(fixed_lot)
-            # As long as there is one fixed, all eq_class are fixed.
-            the_fixed_one = variables[first(fixed_lot)]
-
-            for x in eq_class
-                if !(x in fixed)
-                    # Update bounds.
-                    variables[x].lb = the_fixed_one.lb
-                    variables[x].ub = the_fixed_one.ub
-                    push!(fixed, x)
-                end
-            end
-        else
-            representative = minimum(eq_class)
-            for x in eq_class
-                if x != representative
-                    redirection[x] = representative
-                end
-            end
-        end
-    end
-
-    info(LOGGER, "redirect_synonyms #fixed $(num_fixed) => $(length(fixed)), #synonyms $(num_synonyms_pair) => $(length(redirection))")
-    redirection
-end
+const RULES = [
+    :variable_fixing,
+    :synonym_substitution,
+    :variable_bounding, :constraint_reduction,
+    :coefficient_strengthening,
+    :implied_free_variable_substitution
+]
 
 
 function domain_propagate(
-        m, senses::Vector{Char}, rhs_s::Vector{Float64},
-        variables::Vector{Variable};
-        variable_fixing::Bool=true,
-        synonym_substitution::Bool=true,
-        variable_bounding::Bool=true,
-        constraint_bounding::Bool=true,
-        constraint_simplification::Bool=true,
+        model::DecomposedModel;
+        rules::Vector{Symbol}=RULES,
+        constraint_simplification::Bool=false,
         max_num_passes::Int=20
-    )
-    fixed = Set{Int}()
-    redundant_constraints = Set{Int}()
-    synonyms = Dict{Int, Int}()
-
-    debug(LOGGER, "Start initial bounds reductions for integers.")
-
-    map(tighten_bounds, variables)
+    )::ModelInfo
+    m_info = ModelInfo()
+    @debug(LOGGER, "Start initial bounds reductions for integers")
+    map(tighten_lb, model.variables)
+    map(tighten_ub, model.variables)
 
     updated = true
     pass = 0
     while updated && pass < max_num_passes
         pass += 1
-        info(LOGGER, "Pass $pass starts.")
+        updated = false
+        @info(LOGGER, "Pass $pass starts")
 
-        variable_fixing_stats = variable_bounding ?
-            apply_variable_fixing(m, fixed, variables, rhs_s) :
-            VariableFixingStats(0, 0)
-        synonym_substitution_stats = synonym_substitution ?
-            apply_synonym_substitution(m, senses, rhs_s, variables, redundant_constraints, synonyms) :
-            SynonymSubstitutionStats(0)
-        variable_bounding_stats = variable_bounding ?
-            apply_variable_bounding(m, senses, rhs_s, variables, redundant_constraints) :
-            VariableBoundingStats(0, 0)
-        constraint_bounding_stats = constraint_bounding ?
-            apply_constraint_bounding(m, senses, rhs_s, variables, redundant_constraints) :
-            ConstraintBoundingStats(0)
-        # TODO?
-        # Do not consider synonyms, as they can be fixed.
-        num_effective_variables = size(m, 2) - length(fixed)
-        num_effective_constraints = size(m, 1) - length(redundant_constraints)
+        for rule in rules
+            stats = apply_rule(Val{rule}, model, m_info)
+            updated = updated || has_updated(stats)
+            @info(LOGGER, stats)
+        end
 
-        pass_stats = PassStats(
-            variable_fixing_stats, synonym_substitution_stats,
-            variable_bounding_stats, constraint_bounding_stats,
-            num_effective_variables, num_effective_constraints
-        )
-
-        updated = has_updated(variable_fixing_stats) ||
-            has_updated(synonym_substitution_stats) ||
-            has_updated(variable_bounding_stats) ||
-            has_updated(constraint_bounding_stats)
-
-        dropzeros!(m)
-        info(LOGGER, "Pass $pass $(pass_stats).")
+        dropzeros!(model.m)
     end
 
     # Do it once is enough.
-    constraint_simplification_stats = constraint_simplification ?
-        apply_constraint_simplification(m, senses, rhs_s, variables, redundant_constraints) :
-        ConstraintSimplificationStats(0)
-    info(LOGGER, "$(constraint_simplification_stats).")
-    # Make a better `synonym`.
-    synonyms = redirect_synonyms(variables, synonyms, fixed)
-    fixed, redundant_constraints, synonyms
+    if constraint_simplification
+        stats = apply_rule(Val{:constraint_simplification}, model, m_info)
+        @info(LOGGER, stats)
+    end
+
+    domain_propagate_check(model, m_info)
+    simplify_substitutions(model, m_info)
+    # Turn vtype to be binary if it seems one.
+    # for x in variables
+    #     if x.lb == 0 && x.ub == 1 && x.vtype == VTYPE_INTEGER
+    #         x.vtype = VTYPE_BINARY
+    #     end
+    # end
+    domain_propagate_check(model, m_info)
+    log_effective_figures(model, m_info)
+    m_info
 end
 
-function post_domain_propagate_check(
-        variables::Vector{Variable},
-        rhs_s::Vector{Float64},
-        synonyms::Dict{Int, Int},
-        fixed::Set{Int},
-        redundant_constraints::Set{Int}
-    )
+
+
+
+function domain_propagate_check(model::DecomposedModel, m_info::ModelInfo)
+    @unpack variables = model
+    @unpack fixed, substitutions = m_info
 
     for col in fixed
         x = variables[col]
@@ -184,108 +140,116 @@ function post_domain_propagate_check(
         end
     end
 
-    num_fixed = length(fixed)
-    num_synonyms_pair = length(synonyms)
-    num_redundant_constraints = length(redundant_constraints)
+    for (k, expr) in substitutions
+        if expr.coefs[k] != 0
+            error("substitutions contains $k => $expr")
+        end
+    end
+end
 
-    num_effective_variables = length(variables) - num_fixed - num_synonyms_pair
-    num_effective_constraints = length(rhs_s) - num_redundant_constraints
-
-    info(LOGGER, "Finally #fixed=$(num_fixed), #redundant_constraints=$(num_redundant_constraints), #synonyms=$(num_synonyms_pair).")
-    info(LOGGER, "Finally #effected_variables=$(num_effective_variables), #effective_constraints=$(num_effective_constraints).")
+immutable Presolved
+    model::Gurobi.Model
+    variable_mapping
+    constraint_mapping
+    m_info::ModelInfo
+    decomposed::DecomposedModel
 end
 
 
 function build_model(
-        m, variables::Vector{Variable},
-        senses::Vector{Char}, rhs_s::Vector{Float64},
-        fixed::Set{Int}, redundant_constraints::Set{Int},
-        synonyms::Dict{Int, Int},
+        model::DecomposedModel, m_info::ModelInfo,
         essential_variables::Set{Int}
-    )
-    env = Gurobi.Env()
-    model = Gurobi.Model(env, "presolved")
+    )::Presolved
 
-    variables_new, variable_mapping = reduce_model_variables(
-        fixed, synonyms, variables, essential_variables
+    env = Gurobi.Env()
+    presolved_model = Gurobi.Model(env, "presolved")
+
+    variables, variable_mapping = reduce_model_variables(
+        m_info, model.variables, essential_variables
     )
 
     A, rhs_new, senses_new, constraint_mapping = reduce_model_constraints(
-        length(variables_new), variable_mapping, m, redundant_constraints, rhs_s, senses
+        length(variables), variable_mapping, model, m_info
     )
 
-    lbs, ubs, vtypes = from_variables(variables_new)
+    lbs, ubs, vtypes = from_variables(variables)
 
-    add_vars!(model, vtypes, zeros(length(variables_new)), lbs, ubs)
-    update_model!(model)
-    add_constrs!(model, A, senses_new, rhs_new)
-    update_model!(model)
-    model, variable_mapping, constraint_mapping
+    add_vars!(presolved_model, vtypes, zeros(length(variables)), lbs, ubs)
+    update_model!(presolved_model)
+    add_constrs!(presolved_model, A, senses_new, rhs_new)
+    update_model!(presolved_model)
+
+    Presolved(presolved_model, variable_mapping, constraint_mapping, m_info, model)
 end
 
 
-"""
-- Called by `reduce_model_variables` only.
-- We only care about variables that are fixed and essential.
-- We want to leave only 1 variable in the model,
-- so that additional constraints refering to these variables can be added later.
-- Return `to_remove => representative`.
-- `to_remove` > `representative`
-- All `to_remove` can be safely removed.
-"""
-function get_fixed_essential_variable_redirection(
-        fixed_essential::Set{Int},
-        variables::Vector{Variable}
-    )
-    redirection = Dict{Int, Int}()
-    synonyms_by_value = Dict{Float64, Set{Int}}()
-    for x in fixed_essential
-        v = variables[x].lb
-        if haskey(synonyms_by_value, v)
-            push!(synonyms_by_value[v], x)
-        else
-            synonyms_by_value[v] = Set(x)
-        end
-    end
+# """
+# - Called by `reduce_model_variables` only.
+# - We only care about variables that are fixed and essential.
+# - We want to leave only 1 variable in the model,
+# - so that additional constraints refering to these variables can be added later.
+# - Return `to_remove => representative`.
+# - `to_remove` > `representative`
+# - All `to_remove` can be safely removed.
+# """
+# function get_fixed_essential_variable_redirection(
+#         fixed_essential::Set{Int},
+#         variables::Vector{Variable}
+#     )
+#     redirection = Dict{Int, Int}()
+#     synonyms_by_value = Dict{Float64, Set{Int}}()
+#     for x in fixed_essential
+#         v = variables[x].lb
+#         if haskey(synonyms_by_value, v)
+#             push!(synonyms_by_value[v], x)
+#         else
+#             synonyms_by_value[v] = Set(x)
+#         end
+#     end
 
-    for xs in values(synonyms_by_value)
-        representative = minimum(xs)
-        for x in xs
-            if x != representative
-                redirection[x] = representative
-            end
-        end
-    end
-    # length(synonyms_by_value) is num_representatives
-    # Which is also the extra number of variables that has to be kept due to essential_variables.
-    redirection, length(synonyms_by_value)
-end
+#     for xs in values(synonyms_by_value)
+#         representative = minimum(xs)
+#         for x in xs
+#             if x != representative
+#                 redirection[x] = representative
+#             end
+#         end
+#     end
+#     # length(synonyms_by_value) is num_representatives
+#     # Which is also the extra number of variables that has to be kept due to essential_variables.
+#     redirection, length(synonyms_by_value)
+# end
 
 """
-- Return `variables_new`.
+- Return `variables_new` which is the new model's variables.
 - Return `variable_mapping`, which is `col_old => col_new`.
-- Variables that are not in `variable_map` are fixed & removed.
+- Only values of `variable_map` are in the presolved model.
+- Because we don't need them in the new model.
 """
 function reduce_model_variables(
-        fixed::Set{Int}, synonyms::Dict{Int, Int},
+        m_info::ModelInfo,
         variables::Vector{Variable},
         essential_variables::Set{Int}
     )
-    # In best case, all variables in fixed can be removed, as constraints have no references to them.
-    removable_fixed = setdiff(fixed, essential_variables)
-    # Nothing in `fixed_essential`` is in removable_fixed.
-    fixed_essential = intersect(fixed, essential_variables)
-    redirection, num_extra_kept = get_fixed_essential_variable_redirection(fixed_essential, variables)
-    # All variables in the left one is fixed.
-    # All variables in the right one is not fixed.
-    # So there are no key conflictions.
-    merge!(redirection, synonyms)
+    @unpack fixed, substitutions = m_info
+    # # In best case, all variables in fixed can be removed, as constraints have no references to them.
+    # removable_fixed = setdiff(fixed, essential_variables)
+    # # Nothing in `fixed_essential`` is in removable_fixed.
+    # fixed_essential = intersect(fixed, essential_variables)
+    # redirection, num_extra_kept = get_fixed_essential_variable_redirection(fixed_essential, variables)
+    # # All variables in the left one is fixed.
+    # # All variables in the right one is not fixed.
+    # # So there are no key conflictions.
+    # merge!(redirection, synonyms)
+    # # TODO TODO
+    # num_to_remove = length(removable_fixed) + length(redirection) + length(substitutions)
 
-    num_to_remove = length(removable_fixed) + length(redirection)
+    # Suppose essential_variables is empty for now.
+    num_to_remove = length(fixed) + length(substitutions)
 
-    if num_extra_kept > 0
-        info(LOGGER, "Could have removed $(num_extra_kept) more variables if essential_variables were empty.")
-    end
+    # if num_extra_kept > 0
+    #     @info(LOGGER, "Could have removed $(num_extra_kept) more variables if essential_variables were empty.")
+    # end
 
     num_cols_new = length(variables) - num_to_remove
     variables_new = Array(Variable, num_cols_new)
@@ -294,15 +258,25 @@ function reduce_model_variables(
     i = 0
     # `col` from small to big.
     for x in variables
-        if x.id in removable_fixed
+        if x.id in fixed
             continue
         end
-        if haskey(redirection, x.id)
-            representative = redirection[x.id]
-            # Since representative < x.id, it has already a mapping.
-            variable_mapping[x.id] = variable_mapping[representative]
+
+        if haskey(substitutions, x.id)
             continue
         end
+
+        # if haskey(redirection, x.id)
+        #     representative = redirection[x.id]
+        #     # Since representative < x.id, it has already a mapping.
+        #     if !haskey(substitutions, representative)
+        #         variable_mapping[x.id] = variable_mapping[representative]
+        #     else
+        #         continue
+        #     end
+        #     continue
+        # end
+
         i += 1
         variables_new[i] = x
         variable_mapping[x.id] = i
@@ -313,10 +287,11 @@ end
 
 function reduce_model_constraints(
         num_cols_new,
-        variable_mapping::Dict{Int, Int}, m,
-        redundant_constraints::Set{Int},
-        rhs_s::Vector{Float64}, senses::Vector{Char}
+        variable_mapping::Dict{Int, Int},
+        model::DecomposedModel, m_info::ModelInfo
     )
+    @unpack m, rhs_s, senses = model
+    @unpack redundant_constraints = m_info
     # Note num_cols_new != length(variable_mapping)
     # num_cols_new == unique(values(variable_mapping))
     num_rows = size(m, 1)
@@ -347,29 +322,14 @@ function reduce_model_constraints(
 end
 
 
-function preprocess(model::Gurobi.Model, essential_variables::Set{Int}=Set{Int}())
-    if is_qp(model) || is_qcp(model)
-        error("Only works with MILP!")
-    end
 
-    rhs_s = Gurobi.get_dblattrarray(model, "RHS", 1, num_constrs(model))
-    senses = Gurobi.get_charattrarray(model, "Sense", 1, num_constrs(model))
 
-    variables = get_variables(model)
 
-    m = get_constrmatrix(model)
+function preprocess(grb_model::Gurobi.Model, essential_variables::Set{Int}=Set{Int}())
+    model = DecomposedModel(grb_model)
+    m_info = domain_propagate(model)
 
-    fixed, redundant_constraints, synonyms = domain_propagate(m, senses, rhs_s, variables)
-
-    post_domain_propagate_check(
-        variables, rhs_s, synonyms, fixed, redundant_constraints
-    )
-
-    presolved_model, variable_mapping, constraint_mapping = build_model(
-        m, variables, senses, rhs_s,
-        fixed, redundant_constraints, synonyms, essential_variables
-    )
-    presolved_model, variable_mapping, constraint_mapping, variables
+    build_model(model, m_info, essential_variables)
 end
 
 

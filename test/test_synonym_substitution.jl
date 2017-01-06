@@ -1,7 +1,3 @@
-using GurobiPresolver: apply_synonym_substitution
-using GurobiPresolver: Variable
-
-
 function test_apply_synonym_substitution()
     m = spzeros(20, 10)
     m[1, 2] = 2
@@ -10,7 +6,7 @@ function test_apply_synonym_substitution()
     m[3, 2] = 5
     m[3, 3] = -5
     # Create entry 0 * x1 + 0 * x4
-    # Test x1 & x4 are not synonyms.
+    # Test `x1` & `x4` are not synonyms.
     m[4, 1] = 1
     m[4, 4] = 1
     m[4, 1] = 0
@@ -25,27 +21,22 @@ function test_apply_synonym_substitution()
     variables[4].lb = -5
     variables[4].ub = -5
     senses = ['=' for _ in 1:20]
-    redundant_constraints = Set{Int}()
-    synonyms = Dict{Int, Int}()
+
+    model = DecomposedModel(m, variables, senses, rhs_s)
+    m_info = ModelInfo()
 
     println("Before")
-    print_constraints(m, senses, rhs_s)
+    print_constraints(model)
     # 2.0 * x2 = 0.0
-    # 3.0 * x1 + -3.0 * x2 = 0.0
-    # 5.0 * x2 + -5.0 * x3 = 0.0
-    # 0.0 * x1 + 0.0 * x4 = 0.0
-    stats = @time_fun apply_synonym_substitution(
-        m, senses, rhs_s, variables, redundant_constraints, synonyms
-    )
+    # 3.0 * x1 - 3.0 * x2 = 0.0
+    # 5.0 * x2 - 5.0 * x3 = 0.0
+    stats = @time_fun apply_rule(Val{:synonym_substitution}, model, m_info)
     println("After")
-    print_constraints(m, senses, rhs_s)
-    # 2.0 * x1 + 0.0 * x2 = 0.0
-    # 0.0 * x1 + 0.0 * x2 = 0.0
-    # 0.0 * x2 + 0.0 * x3 = 0.0
-    # 0.0 * x1 + 0.0 * x4 = 0.0
-    @test stats.num_synonyms_pair == 2
-    @test synonyms == Dict(2=>1, 3=>2)
-    @test redundant_constraints == Set(2:20)
+    print_constraints(model)
+    # 2.0 * x1 = 0.0
+    @test stats.synonyms_pair == 2
+    @test sort!(collect(keys(m_info.substitutions))) == [2, 3]
+    @test m_info.redundant_constraints == Set(2:3)
     @test variables[1].lb == 1
     @test variables[1].ub == 1
 

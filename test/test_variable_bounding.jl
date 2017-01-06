@@ -1,6 +1,3 @@
-using GurobiPresolver: apply_variable_bounding
-using GurobiPresolver: Variable
-
 function test_apply_variable_bounding()
     m = spzeros(20, 10)
     m[1, 1] = 4
@@ -35,20 +32,18 @@ function test_apply_variable_bounding()
     senses[2] = '<'
     senses[3] = '='
 
-    redundant_constraints = Set{Int}()
-    synonyms = Dict{Int, Int}()
+    model = DecomposedModel(m, variables, senses, rhs_s)
+    m_info = ModelInfo()
 
     println("Before")
-    print_constraints(m, senses, rhs_s)
-    # 4.0 * x1 + -3.0 * x2 + -2.0 * x3 + 1.0 * x4 + 2.0 * x5 < 13.0
-    # -3.0 * x1 + 2.0 * x2 + -1.0 * x3 + 2.0 * x4 + 3.0 * x5 < -9.0
+    print_constraints(model)
+    # 4.0 * x1 - 3.0 * x2 - 2.0 * x3 + x4 + 2.0 * x5 < 13.0
+    # 3.0 * x1 + 2.0 * x2 - x3 + 2.0 * x4 + 3.0 * x5 < -9.0
     # 2.0 * x6 = 2.4
-    stats = @time_fun apply_variable_bounding(
-        m, senses, rhs_s, variables, redundant_constraints
-    )
+    stats = @time_fun apply_rule(Val{:variable_bounding}, model, m_info)
 
-    @test stats.num_row_updates == 3
-    @test stats.num_bounds_updates == 6
+    @test stats.row_updates == 3
+    @test stats.bounds_updates == 6
 
     @test 2.1 < variables[1].lb < 2.2
     @test variables[1].ub == 7.9

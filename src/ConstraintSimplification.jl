@@ -1,8 +1,29 @@
+module ConstraintSimplification
+
+using MiniLogging
+using Parameters
+
+const LOGGER = get_logger(current_module())
+
+using ..IterSparseMatrix
+using ..Variables
+using ..Rules
+using ..Models
+
+const RULE = :constraint_simplification
+
+immutable Stats <: Statistics{Val{RULE}}
+    simplified_constraints::Int
+end
+
+
+# Turn -x + 10y >= -0.1 to x - y <= 0
+
 const simple_rule = Dict(
     # x + y >= 1
-    (false, true, true, true) => (1, 1, '>', 1),
+    (false, true, true, true) => (-1, -1, '<', -1),
     # x - y >= 0
-    (true, false, true, true) => (1, -1, '>', 0),
+    (true, false, true, true) => (-1, 1, '<', 0),
     # x - y <= 0
     (true, true, false, true) => (1, -1, '<', 0),
     # x + y <= 1
@@ -10,11 +31,12 @@ const simple_rule = Dict(
 )
 
 
-function apply_constraint_simplification(
-        m, senses::Vector{Char}, rhs_s::Vector{Float64},
-        variables::Vector{Variable},
-        redundant_constraints::Set{Int}
-    )
+function Rules.apply_rule(
+        ::Type{Val{RULE}}, model::DecomposedModel, m_info::ModelInfo
+    )::Stats
+    @unpack m, variables, rhs_s, senses = model
+    @unpack redundant_constraints = m_info
+
     num_simplified_constraints = 0
 
     # m is modified row by row.
@@ -27,19 +49,16 @@ function apply_constraint_simplification(
         end
 
         if isempty(row_element)
-            push!(redundant_constraints, row)
             continue
         end
 
-        if length(row_element) != 2
+        terms = collect(nz_terms(row_element))
+
+        if length(terms) != 2
             continue
         end
 
-        (col1, coef1), (col2, coef2) = enumerate(row_element)
-
-        if coef1 == 0 || coef2 == 0
-            continue
-        end
+        (col1, coef1), (col2, coef2) = terms
 
         x1 = variables[col1]
         x2 = variables[col2]
@@ -53,11 +72,6 @@ function apply_constraint_simplification(
             case_01 = coef2 <= rhs
             case_10 = coef1 <= rhs
             case_11 = coef1 + coef2 <= rhs
-        elseif sense == '>'
-            case_00 = 0 >= rhs
-            case_01 = coef2 >= rhs
-            case_10 = coef1 >= rhs
-            case_11 = coef1 + coef2 >= rhs
         else
             case_00 = 0 == rhs
             case_01 = coef2 == rhs
@@ -81,10 +95,11 @@ function apply_constraint_simplification(
         m[row, col2] = coef2_new
         senses[row] = sense_new
         rhs_s[row] = rhs_new
-        debug(LOGGER, "Simplify constraint $row: $before to $after")
+        @debug(LOGGER, "Simplify constraint $row: $before to $after")
         num_simplified_constraints += 1
     end
 
-    ConstraintSimplificationStats(num_simplified_constraints)
+    Stats(num_simplified_constraints)
 end
 
+end
